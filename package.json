@@ -1,0 +1,52 @@
+{
+  "name": "trading-crypto-bot",
+  "version": "1.0.0",
+  "description": "AI-powered cryptocurrency trading bot with EMA scalping strategies",
+  "type": "module",
+  "main": "dist/run.js",
+  "scripts": {
+    "start": "node dist/run.js",
+    "start:simple": "node dist/run-simple.js",
+    "start:fixed": "node dist/run-simple-fixed.js",
+    "train": "node dist/train.js",
+    "test:api": "node dist/test-api.js",
+    "build": "tsx build.ts",
+    "dev": "tsx --watch build.ts",
+    "clean": "rimraf dist",
+    "install:deps": "npm install"
+  },
+  "keywords": [
+    "crypto",
+    "trading",
+    "bot",
+    "ema",
+    "scalping",
+    "recall-network",
+    "defi"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "dayjs": "^1.11.10",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "esbuild": "^0.25.9",
+    "rimraf": "^5.0.5",
+    "tsx": "^4.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/trading-crypto-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/trading-crypto-bot/issues"
+  },
+  "homepage": "https://github.com/yourusername/trading-crypto-bot#readme"
+}

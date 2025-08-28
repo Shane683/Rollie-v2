@@ -38,6 +38,7 @@ const TEST_MINUTES = Number(process.env.TEST_MINUTES || "1440");
 const DRY_RUN = (process.env.DRY_RUN || "false") === "true";
 // Get normalized instruments using the new module
 const CHAINS = ["eth", "base", "arbitrum", "optimism", "polygon", "solana"];
+const TRADE_TOKENS = TOKENS; // Use the TOKENS array defined above
 const INSTRUMENTS = getInstruments({ CHAINS, TRADE_TOKENS });
 
 // địa chỉ token (kept for backward compatibility)

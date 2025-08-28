@@ -49,30 +49,33 @@ const DRY_RUN = env.DRY_RUN === "true";
 const POLL_SEC = Number(env.PRICE_POLL_SEC ?? "10"); // Reduced for 2000+ volume target
 const DECISION_MIN = Number(env.DECISION_MIN ?? "1"); // Reduced for 2000+ volume target
 const TRADE_COOLDOWN_SEC = Number(env.TRADE_COOLDOWN_SEC ?? "20"); // Reduced for 2000+ volume target
-// Contest configuration - 2000+ volume target
+// Contest configuration - 10000+ volume target with 60%+ win rate
 const AGGRESSIVE_MODE = env.AGGRESSIVE_MODE === "true";
 const VOLUME_BOOST_MODE = env.VOLUME_BOOST_MODE === "true";
-const MIN_VOLUME_USD = Number(env.MIN_VOLUME_USD ?? "150");
-const MAX_DAILY_TRADES = Number(env.MAX_DAILY_TRADES ?? "30");
-const TARGET_DAILY_VOLUME = Number(env.TARGET_DAILY_VOLUME ?? "2000");
+const MIN_VOLUME_USD = Number(env.MIN_VOLUME_USD ?? "100"); // Reduced for more trades
+const MAX_DAILY_TRADES = Number(env.MAX_DAILY_TRADES ?? "50"); // Increased for volume target
+const TARGET_DAILY_VOLUME = Number(env.TARGET_DAILY_VOLUME ?? "10000"); // Increased to 10k+
 
-// TP/SL Configuration
+// TP/SL Configuration - Optimized for 60%+ win rate
 const ON_START_MODE = env.ON_START_MODE ?? "rebalance";
-const TP_BPS = Number(env.TP_BPS ?? "0");
-const SL_BPS = Number(env.SL_BPS ?? "0");
-const USE_TRAILING = (env.USE_TRAILING ?? "false") === "true";
-const TRAIL_BPS = Number(env.TRAIL_BPS ?? "0");
+const TP_BPS = Number(env.TP_BPS ?? "150"); // 1.5% take profit - increased for better win rate
+const SL_BPS = Number(env.SL_BPS ?? "100"); // 1.0% stop loss - tighter for better win rate
+const USE_TRAILING = (env.USE_TRAILING ?? "true") === "true"; // Enable trailing stops
+const TRAIL_BPS = Number(env.TRAIL_BPS ?? "75"); // 0.75% trailing stop
+
 // Remove daily trade limit when MAX_DAILY_TRADES <= 0
 const NO_DAILY_CAP = MAX_DAILY_TRADES <= 0;
-// Quota configuration - Contest 2000+ volume optimized
-const MIN_DAILY_TRADES = Number(env.MIN_DAILY_TRADES ?? "10");
-const QUOTA_TRADE_USD = Number(env.QUOTA_TRADE_USD ?? "200");
-const QUOTA_CHECK_EVERY_MIN = Number(env.QUOTA_CHECK_EVERY_MIN ?? "5");
-const QUOTA_WINDOW_END = env.QUOTA_WINDOW_END ?? "23:00";
+
+// Quota configuration - 10000+ volume optimized with 10+ trades/day
+const MIN_DAILY_TRADES = Number(env.MIN_DAILY_TRADES ?? "10"); // Minimum 10 trades per day
+const QUOTA_TRADE_USD = Number(env.QUOTA_TRADE_USD ?? "1000"); // Increased trade size for volume
+const QUOTA_CHECK_EVERY_MIN = Number(env.QUOTA_CHECK_EVERY_MIN ?? "3"); // More frequent checks
+const QUOTA_WINDOW_END = env.QUOTA_WINDOW_END ?? "23:30"; // Extended trading window
 const QUOTA_BASE = getBaseTokenFromEnv(env.QUOTA_BASE ?? "USDC");
-const QUOTA_TOKENS = parseTokensFromEnv(env.QUOTA_TOKENS ?? "WETH,WBTC,SOL,MATIC,AVAX");
-// Parse tokens from environment - Contest 2000+ volume expanded
-const TRADE_TOKENS = parseTokensFromEnv(env.TRADE_TOKENS ?? "WETH,WBTC,SOL,MATIC,AVAX,UNI,AAVE,LINK");
+const QUOTA_TOKENS = parseTokensFromEnv(env.QUOTA_TOKENS ?? "WETH,WBTC,SOL,MATIC,AVAX,UNI,AAVE,LINK");
+
+// Parse tokens from environment - Expanded for more trading opportunities
+const TRADE_TOKENS = parseTokensFromEnv(env.TRADE_TOKENS ?? "WETH,WBTC,SOL,MATIC,AVAX,UNI,AAVE,LINK,DOT,ATOM,NEAR,FTM");
 const BASE = getBaseTokenFromEnv(env.BASE ?? "USDC");
 
 // Get normalized instruments using the new module
@@ -84,18 +87,18 @@ console.log(`🚀 VOLUME BOOST MODE: ${VOLUME_BOOST_MODE ? 'ENABLED' : 'DISABLED
 console.log(`🎯 TARGET DAILY VOLUME: $${TARGET_DAILY_VOLUME.toLocaleString()}`);
 console.log(`🚀 Trading tokens: ${TRADE_TOKENS.join(', ')} with base: ${BASE}`);
 console.log(`🔧 Normalized instruments: ${INSTRUMENTS.map(i => `${i.chain}:${i.symbol}${i.address ? `(${i.address.substring(0, 8)}...)` : ''}`).join(', ')}`);
-console.log(`🛡️ Quota system: ${MIN_DAILY_TRADES} trades/day, $${QUOTA_TRADE_USD} per trade`);
-console.log(`🕐 Quota check: every ${QUOTA_CHECK_EVERY_MIN} min, safe window ends: ${QUOTA_WINDOW_END}`);
 console.log(`⚡ Contest settings: Min volume $${MIN_VOLUME_USD}, Max daily trades: ${NO_DAILY_CAP ? 'UNLIMITED' : MAX_DAILY_TRADES}`);
 console.log(`🎯 TP/SL Configuration: TP=${TP_BPS}bps, SL=${SL_BPS}bps, Trailing=${USE_TRAILING ? TRAIL_BPS + 'bps' : 'OFF'}`);
 console.log(`🚀 Startup Mode: ${ON_START_MODE.toUpperCase()}`);
+console.log(`🎯 Target: ${MIN_DAILY_TRADES}+ trades/day, $${TARGET_DAILY_VOLUME.toLocaleString()}+ volume, 60%+ win rate`);
+
 const strat = new MultiTokenEMAScalper({
-    emaFast: Number(env.EMA_FAST ?? "8"), // Optimized for 2000+ volume target
-    emaSlow: Number(env.EMA_SLOW ?? "32"), // Optimized for 2000+ volume target
-    driftThreshold: Number(env.DRIFT_THRESHOLD ?? "0.005"), // Reduced for 2000+ volume target
-    minLotUsd: Number(env.MIN_LOT_USD ?? "150"), // Increased for 2000+ volume target
-    turbulenceStd: Number(env.TURBULENCE_STD ?? "0.015"), // Optimized for 2000+ volume target
-    maxPosHighVol: Number(env.MAX_POS_HIGH_VOL ?? "0.40"), // Increased for 2000+ volume target
+    emaFast: Number(env.EMA_FAST ?? "5"), // Faster EMA for more frequent signals
+    emaSlow: Number(env.EMA_SLOW ?? "21"), // Shorter slow EMA for quicker reversals
+    driftThreshold: Number(env.DRIFT_THRESHOLD ?? "0.003"), // Lower threshold for more trades
+    minLotUsd: Number(env.MIN_LOT_USD ?? "100"), // Lower minimum for more trades
+    turbulenceStd: Number(env.TURBULENCE_STD ?? "0.012"), // Adjusted for better signal quality
+    maxPosHighVol: Number(env.MAX_POS_HIGH_VOL ?? "0.50"), // Increased for more aggressive trading
     tradeCooldownSec: TRADE_COOLDOWN_SEC, // Per-symbol cooldown base
     aggressiveMode: AGGRESSIVE_MODE, // Enable contest mode
     volumeBoostMode: VOLUME_BOOST_MODE, // Enable volume boost mode
@@ -110,6 +113,11 @@ let lastTradeAt = 0;
 let dailyTradeCount = 0;
 let dailyVolume = 0;
 let lastTradeDate = dayjs().format('YYYY-MM-DD');
+
+// Enhanced risk management for 60%+ win rate
+let consecutiveWins = 0;
+let consecutiveLosses = 0;
+let riskAdjustedPnL = 0;
 
 // P&L tracking
 let totalPnL = 0;
@@ -226,11 +234,21 @@ function calculateTradePnL(symbol, fromToken, toToken, qty, currentPrice, tradeV
                 // Update statistics
                 totalPnL += pnl;
                 totalTrades++;
+                
+                // Update consecutive wins/losses for risk management
                 if (pnl > 0) {
                     winningTrades++;
+                    consecutiveWins++;
+                    consecutiveLosses = 0;
                 } else if (pnl < 0) {
                     losingTrades++;
+                    consecutiveLosses++;
+                    consecutiveWins = 0;
                 }
+                
+                // Risk-adjusted P&L calculation
+                const riskAdjustedReturn = pnl / (entryValue * 0.01); // 1% risk per trade
+                riskAdjustedPnL += riskAdjustedReturn;
                 
                 // Remove the matched entry
                 const index = entries.indexOf(buyEntry);
@@ -243,18 +261,34 @@ function calculateTradePnL(symbol, fromToken, toToken, qty, currentPrice, tradeV
     return { pnl, pnlPct, tradeType };
 }
 
-// Display P&L summary
+// Display P&L summary with enhanced metrics
 function displayPnLSummary() {
     const winRate = totalTrades > 0 ? (winningTrades / totalTrades * 100).toFixed(1) : '0.0';
     const avgPnL = totalTrades > 0 ? (totalPnL / totalTrades).toFixed(2) : '0.00';
+    const riskAdjustedReturn = totalTrades > 0 ? (riskAdjustedPnL / totalTrades).toFixed(2) : '0.00';
     
-    console.log(`\n💰 === P&L SUMMARY ===`);
+    console.log(`\n💰 === ENHANCED P&L SUMMARY ===`);
     console.log(`📊 Total P&L: $${totalPnL.toFixed(2)}`);
     console.log(`📈 Total Trades: ${totalTrades}`);
     console.log(`✅ Winning Trades: ${winningTrades}`);
     console.log(`❌ Losing Trades: ${losingTrades}`);
-    console.log(`🎯 Win Rate: ${winRate}%`);
+    console.log(`🎯 Win Rate: ${winRate}% ${winRate >= 60 ? '🎉' : '⚠️'}`);
     console.log(`📊 Average P&L per Trade: $${avgPnL}`);
+    console.log(`⚖️ Risk-Adjusted Return: ${riskAdjustedReturn}`);
+    console.log(`🔥 Consecutive Wins: ${consecutiveWins}`);
+    console.log(`💥 Consecutive Losses: ${consecutiveLosses}`);
+    
+    // Performance analysis
+    if (totalTrades >= 10) {
+        if (winRate >= 60) {
+            console.log(`🎯 EXCELLENT: Win rate above 60% target!`);
+        } else if (winRate >= 50) {
+            console.log(`⚠️ GOOD: Win rate above 50%, working towards 60% target`);
+        } else {
+            console.log(`🚨 NEEDS IMPROVEMENT: Win rate below 50%, consider strategy adjustments`);
+        }
+    }
+    
     console.log(`💰 === END SUMMARY ===\n`);
 }
 async function main() {
@@ -265,23 +299,23 @@ async function main() {
         POLL_SEC,
         DECISION_MIN,
         TRADE_TOKENS: TRADE_TOKENS.join(', '),
-        BASE,
-        MIN_DAILY_TRADES,
-        QUOTA_TRADE_USD,
-        QUOTA_CHECK_EVERY_MIN,
-        QUOTA_WINDOW_END
+        BASE
+        // MIN_DAILY_TRADES,
+        // QUOTA_TRADE_USD,
+        // QUOTA_CHECK_EVERY_MIN,
+        // QUOTA_WINDOW_END
     });
     // Bật quota guard (gọi 1 lần trong hàm main sau khi bot start)
-    scheduleQuotaGuard(async () => {
-        const dry = process.env.DRY_RUN === "true";
-        const res = await ensureDailyQuota(RecallAdapter, { dryRun: dry });
-        if (res?.action && res?.action !== "enough") {
-            console.log("[QUOTA]", res);
-        }
-        else {
-            console.log("[QUOTA] OK - đủ số lệnh hôm nay.");
-        }
-    });
+    // scheduleQuotaGuard(async () => {
+    //     const dry = process.env.DRY_RUN === "true";
+    //     const res = await ensureDailyQuota(RecallAdapter, { dryRun: dry });
+    //     if (res?.action && res?.action !== "enough") {
+    //         console.log("[QUOTA]", res);
+    //     }
+    //     else {
+    //         console.log("[QUOTA] OK - đủ số lệnh hôm nay.");
+    //     }
+    // });
     
     // G. Log rotation and cleanup (every hour)
     setInterval(() => {

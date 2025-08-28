@@ -8,6 +8,8 @@
     "start": "node dist/run.js",
     "start:simple": "node dist/run-simple.js",
     "start:fixed": "node dist/run-simple-fixed.js",
+    "start:advanced": "node dist/run-advanced.js",
+    "start:enhanced": "node dist/run-enhanced.js",
     "train": "node dist/train.js",
     "test:api": "node dist/test-api.js",
     "build": "tsx build.ts",

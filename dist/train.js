@@ -2,6 +2,7 @@ import "dotenv/config";
 import dayjs from "dayjs";
 import { z } from "zod";
 import { recall, configureRecall } from "./lib/recall.js";
+import { getInstruments } from "./lib/instruments.js";
 import { EMAScalper } from "./strategies/emaScalper.js";
 import { sleep } from "./lib/math.js";
 const env = z.object({
@@ -32,6 +33,11 @@ const TOKENS = {
     DAI: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
     LINK: "0x514910771AF9Ca656af840dff83E8264EcF986CA"
 };
+
+// Get normalized instruments using the new module
+const CHAINS = ["eth", "base", "arbitrum", "optimism", "polygon", "solana"];
+const TRADE_TOKENS = Object.keys(TOKENS);
+const INSTRUMENTS = getInstruments({ CHAINS, TRADE_TOKENS });
 // Current trading pair
 let currentFromToken = "USDC";
 let currentToToken = "WETH";

@@ -46,8 +46,22 @@ export function getTokenConfig(symbol) {
     return TOKEN_CONFIGS[symbol.toUpperCase()] || null;
 }
 export function parseTokensFromEnv(tokensEnv) {
-    return tokensEnv.split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
+    return tokensEnv.split(',').map(t => {
+        const trimmed = t.trim();
+        // If it's a contract address (starts with 0x), don't convert to uppercase
+        if (trimmed.startsWith('0x')) {
+            return trimmed;
+        }
+        // If it's a symbol, convert to uppercase
+        return trimmed.toUpperCase();
+    }).filter(Boolean);
 }
 export function getBaseTokenFromEnv(baseEnv) {
-    return baseEnv.trim().toUpperCase();
+    const trimmed = baseEnv.trim();
+    // If it's a contract address (starts with 0x), don't convert to uppercase
+    if (trimmed.startsWith('0x')) {
+        return trimmed;
+    }
+    // If it's a symbol, convert to uppercase
+    return trimmed.toUpperCase();
 }

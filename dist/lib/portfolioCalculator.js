@@ -1,4 +1,5 @@
 import { recall } from "./recall.js";
+import { getInstruments } from "./instruments.js";
 export class PortfolioCalculator {
     constructor() {
         this.balances = new Map();
@@ -102,7 +103,20 @@ export class PortfolioCalculator {
                     balance.price = 1; // USDC is always $1
                 }
                 else {
-                    balance.price = await recall.price(balance.token, balance.chain, balance.specificChain);
+                    // Get normalized instruments for proper chain/symbol mapping
+                    const CHAINS = ["eth", "base", "arbitrum", "optimism", "polygon", "solana"];
+                    const TRADE_TOKENS = [balance.symbol];
+                    const INSTRUMENTS = getInstruments({ CHAINS, TRADE_TOKENS });
+                    const instrument = INSTRUMENTS[0];
+                    
+                    if (instrument) {
+                        // Use address if available, otherwise use symbol
+                        const tokenToQuery = instrument.address || instrument.symbol;
+                        balance.price = await recall.price(tokenToQuery, instrument.chain, instrument.chain === "solana" ? "mainnet" : instrument.chain);
+                    } else {
+                        // Fallback to original method
+                        balance.price = await recall.price(balance.token, balance.chain, balance.specificChain);
+                    }
                 }
                 balance.valueUsd = balance.amount * balance.price;
             }

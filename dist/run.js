@@ -4,6 +4,7 @@ import { z } from "zod";
 import { recall, configureRecall } from "./lib/recall.js";
 import { MultiTokenEMAScalper } from "./strategies/multiTokenEMAScalper.js";
 import { getTokenConfig, parseTokensFromEnv, getBaseTokenFromEnv } from "./lib/tokens.js";
+import { getInstruments } from "./lib/instruments.js";
 import { ensureDailyQuota, scheduleQuotaGuard } from "./lib/quota.js";
 import { sleep } from "./lib/math.js";
 import { CostEstimator } from "./lib/costs.js";
@@ -73,10 +74,16 @@ const QUOTA_TOKENS = parseTokensFromEnv(env.QUOTA_TOKENS ?? "WETH,WBTC,SOL,MATIC
 // Parse tokens from environment - Contest 2000+ volume expanded
 const TRADE_TOKENS = parseTokensFromEnv(env.TRADE_TOKENS ?? "WETH,WBTC,SOL,MATIC,AVAX,UNI,AAVE,LINK");
 const BASE = getBaseTokenFromEnv(env.BASE ?? "USDC");
+
+// Get normalized instruments using the new module
+const CHAINS = ["eth", "base", "arbitrum", "optimism", "polygon", "solana"];
+const INSTRUMENTS = getInstruments({ CHAINS, TRADE_TOKENS });
+
 console.log(`🚀 CONTEST MODE: ${AGGRESSIVE_MODE ? 'ENABLED' : 'DISABLED'}`);
 console.log(`🚀 VOLUME BOOST MODE: ${VOLUME_BOOST_MODE ? 'ENABLED' : 'DISABLED'}`);
 console.log(`🎯 TARGET DAILY VOLUME: $${TARGET_DAILY_VOLUME.toLocaleString()}`);
 console.log(`🚀 Trading tokens: ${TRADE_TOKENS.join(', ')} with base: ${BASE}`);
+console.log(`🔧 Normalized instruments: ${INSTRUMENTS.map(i => `${i.chain}:${i.symbol}${i.address ? `(${i.address.substring(0, 8)}...)` : ''}`).join(', ')}`);
 console.log(`🛡️ Quota system: ${MIN_DAILY_TRADES} trades/day, $${QUOTA_TRADE_USD} per trade`);
 console.log(`🕐 Quota check: every ${QUOTA_CHECK_EVERY_MIN} min, safe window ends: ${QUOTA_WINDOW_END}`);
 console.log(`⚡ Contest settings: Min volume $${MIN_VOLUME_USD}, Max daily trades: ${NO_DAILY_CAP ? 'UNLIMITED' : MAX_DAILY_TRADES}`);
@@ -313,28 +320,27 @@ async function main() {
             const now = Date.now();
             // 1) Lấy giá cho tất cả tokens
             const tokenPrices = new Map();
-            for (const symbol of TRADE_TOKENS) {
-                const tokenConfig = getTokenConfig(symbol);
-                if (tokenConfig) {
-                    try {
-                        const price = await recall.price(tokenConfig.address, tokenConfig.chain, tokenConfig.specificChain);
-                        tokenPrices.set(symbol, price);
-                        // 2) Cập nhật EMA / turbulence cho từng token
-                        strat.updatePrice(symbol, price);
+            for (const { chain, symbol, address } of INSTRUMENTS) {
+                try {
+                    // Use address if available, otherwise use symbol
+                    const tokenToQuery = address || symbol;
+                    const price = await recall.price(tokenToQuery, chain, chain === "solana" ? "mainnet" : chain);
+                    tokenPrices.set(symbol, price);
+                    // 2) Cập nhật EMA / turbulence cho từng token
+                    strat.updatePrice(symbol, price);
+                    
+                    // E. Check protective exits for existing positions
+                    const exitSignal = strat.checkProtectiveExits(symbol, price);
+                    if (exitSignal) {
+                        console.log(`[${ts()}] 🚨 ${symbol}: ${exitSignal.type.toUpperCase()} - ${exitSignal.reason}`);
+                        logger.logProtectiveExit(symbol, exitSignal.type, exitSignal.reason, price, strat.getTokenState(symbol)?.entryPrice || 0);
                         
-                        // E. Check protective exits for existing positions
-                        const exitSignal = strat.checkProtectiveExits(symbol, price);
-                        if (exitSignal) {
-                            console.log(`[${ts()}] 🚨 ${symbol}: ${exitSignal.type.toUpperCase()} - ${exitSignal.reason}`);
-                            logger.logProtectiveExit(symbol, exitSignal.type, exitSignal.reason, price, strat.getTokenState(symbol)?.entryPrice || 0);
-                            
-                            // TODO: Execute protective exit trade
-                            // This would require additional logic to handle the exit trade
-                        }
+                        // TODO: Execute protective exit trade
+                        // This would require additional logic to handle the exit trade
                     }
-                    catch (e) {
-                        console.error(`[${ts()}] Failed to get price for ${symbol}:`, e);
-                    }
+                }
+                catch (e) {
+                    console.error(`[${ts()}] Failed to get price for ${symbol} on ${chain}:`, e);
                 }
             }
             // 3) Mỗi DECISION_MIN phút mới ra quyết định

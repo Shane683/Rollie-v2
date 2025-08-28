@@ -1,4 +1,5 @@
 import { sleep } from "./math.js";
+import { getInstruments } from "./instruments.js";
 
 /**
  * Get total equity in USD from portfolio
@@ -10,16 +11,23 @@ export async function getEquityUSD({ recall, base, chain }) {
     const symbols = Object.keys(balances);
     let equity = 0;
     
-    for (const sym of symbols) {
-      if (sym === base) continue;
-      const qty = Number(balances[sym] || 0);
+    // Get normalized instruments for proper chain/symbol mapping
+    const CHAINS = ["eth", "base", "arbitrum", "optimism", "polygon", "solana"];
+    const TRADE_TOKENS = symbols.filter(s => s !== base);
+    const INSTRUMENTS = getInstruments({ CHAINS, TRADE_TOKENS });
+    
+    for (const { chain: tokenChain, symbol, address } of INSTRUMENTS) {
+      if (symbol === base) continue;
+      const qty = Number(balances[symbol] || 0);
       if (!qty) continue;
       
       try {
-        const px = await recall.price(sym, chain || "evm", chain === "eth" ? "eth" : "evm");
+        // Use address if available, otherwise use symbol
+        const tokenToQuery = address || symbol;
+        const px = await recall.price(tokenToQuery, tokenChain, tokenChain === "solana" ? "mainnet" : tokenChain);
         equity += qty * Number(px);
       } catch (e) {
-        console.warn(`Failed to get price for ${sym}:`, e.message);
+        console.warn(`Failed to get price for ${symbol} on ${tokenChain}:`, e.message);
       }
     }
     
@@ -45,9 +53,22 @@ export async function sellInChunks({
   if (qty <= 0) return;
   
   try {
-    const px = await recall.price(symbol, chain || "evm", chain === "eth" ? "eth" : "evm");
+    // Get normalized instruments for proper chain/symbol mapping
+    const CHAINS = ["eth", "base", "arbitrum", "optimism", "polygon", "solana"];
+    const TRADE_TOKENS = [symbol];
+    const INSTRUMENTS = getInstruments({ CHAINS, TRADE_TOKENS });
+    const instrument = INSTRUMENTS[0];
+    
+    if (!instrument) {
+      console.error(`[TP/SL] ${symbol}: Could not determine instrument for chain ${chain}`);
+      return;
+    }
+    
+    // Use address if available, otherwise use symbol
+    const tokenToQuery = instrument.address || instrument.symbol;
+    const px = await recall.price(tokenToQuery, instrument.chain, instrument.chain === "solana" ? "mainnet" : instrument.chain);
     const usdTotal = qty * Number(px);
-    const equity = await getEquityUSD({ recall, base, chain });
+    const equity = await getEquityUSD({ recall, base, chain: instrument.chain });
     const cap = 0.25 * equity; // 25% per trade
     
     if (cap <= 0) {
@@ -114,15 +135,23 @@ export async function checkTpSlAndExitIfNeeded({
     const pf = await recall.portfolio();
     const balances = pf?.balances ?? pf?.tokens ?? {};
     
-    for (const [sym, balance] of Object.entries(balances)) {
-      if (sym === base) continue;
+    // Get normalized instruments for proper chain/symbol mapping
+    const CHAINS = ["eth", "base", "arbitrum", "optimism", "polygon", "solana"];
+    const TRADE_TOKENS = Object.keys(balances).filter(s => s !== base);
+    const INSTRUMENTS = getInstruments({ CHAINS, TRADE_TOKENS });
+    
+    for (const { chain: tokenChain, symbol, address } of INSTRUMENTS) {
+      if (symbol === base) continue;
       
+      const balance = balances[symbol];
       const qty = Number(balance?.qty || balance || 0);
       if (qty <= 0) continue;
 
       try {
-        const px = await recall.price(sym, chain || "evm", chain === "eth" ? "eth" : "evm");
-        const st = tradingState.pos[sym];
+        // Use address if available, otherwise use symbol
+        const tokenToQuery = address || symbol;
+        const px = await recall.price(tokenToQuery, tokenChain, tokenChain === "solana" ? "mainnet" : tokenChain);
+        const st = tradingState.pos[symbol];
 
         // If we don't have saved state (first run), skip TP/SL for this token
         if (!st || !st.qty) continue;
@@ -139,20 +168,20 @@ export async function checkTpSlAndExitIfNeeded({
         const hitTrail = useTrailing && st.trailingHigh > 0 && px <= st.trailingHigh * (1 - trailBps / 1e4);
 
         if (hitTP || hitSL || hitTrail) {
-          console.log(`[TP/SL] ${sym} qty=${qty} avg=${avg.toFixed(6)} px=${px} reason=${hitTP ? "TP" : hitSL ? "SL" : "TRAIL"}`);
+          console.log(`[TP/SL] ${symbol} qty=${qty} avg=${avg.toFixed(6)} px=${px} reason=${hitTP ? "TP" : hitSL ? "SL" : "TRAIL"}`);
           
           await sellInChunks({ 
             recall, 
-            symbol: sym, 
+            symbol: symbol, 
             qty, 
             base, 
-            chain, 
+            chain: tokenChain, 
             tradeCooldownSec 
           });
           
           // Update state after full exit
           updatePositionState(tradingState, { 
-            token: sym, 
+            token: symbol, 
             side: "SELL", 
             qty, 
             priceUSD: px 
@@ -160,7 +189,7 @@ export async function checkTpSlAndExitIfNeeded({
           saveState(tradingState);
         }
       } catch (e) {
-        console.error(`[TP/SL] ${sym}: Error checking TP/SL:`, e.message);
+        console.error(`[TP/SL] ${symbol}: Error checking TP/SL:`, e.message);
       }
     }
   } catch (e) {

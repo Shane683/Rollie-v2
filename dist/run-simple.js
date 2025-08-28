@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { recall, configureRecall } from "./lib/recall.js";
+import { getInstruments } from "./lib/instruments.js";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const nowIso = () => new Date().toISOString();
 function ema(prev, price, len) {
@@ -35,7 +36,11 @@ const QUOTA_TRADE_USD = Number(process.env.QUOTA_TRADE_USD || "10");
 const QUOTA_CHECK_EVERY_MIN = Number(process.env.QUOTA_CHECK_EVERY_MIN || "15");
 const TEST_MINUTES = Number(process.env.TEST_MINUTES || "1440");
 const DRY_RUN = (process.env.DRY_RUN || "false") === "true";
-// địa chỉ token
+// Get normalized instruments using the new module
+const CHAINS = ["eth", "base", "arbitrum", "optimism", "polygon", "solana"];
+const INSTRUMENTS = getInstruments({ CHAINS, TRADE_TOKENS });
+
+// địa chỉ token (kept for backward compatibility)
 const ADDR = {
     USDC: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
     WETH: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -84,9 +89,11 @@ async function main() {
         try {
             const pf = await getPortfolio();
             const nav = Number(pf?.totalValue || 0);
-            for (const sym of TOKENS) {
-                const st = states[sym];
-                const px = await getPrice(ADDR[sym]);
+            for (const { chain, symbol, address } of INSTRUMENTS) {
+                const st = states[symbol];
+                // Use address if available, otherwise use symbol
+                const tokenToQuery = address || symbol;
+                const px = await recall.price(tokenToQuery, chain, chain === "solana" ? "mainnet" : chain);
                 st.pxBuf.push(px);
                 if (st.pxBuf.length > 500)
                     st.pxBuf.shift();

@@ -1,4 +1,38 @@
-import "dotenv/config";
+// --- load .env no matter where we run from ---
+import path from "node:path";
+import fs from "fs";
+import dotenv from "dotenv";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Ưu tiên .env ở project root (khi file đang ở dist/ -> ../.env chính là root)
+const candidates = [
+  process.env.DOTENV_PATH,
+  path.resolve(process.cwd(), ".env"),
+  path.resolve(__dirname, "../.env"),      // khi chạy dist/run.js
+  path.resolve(__dirname, "../../.env"),   // nếu cấu trúc khác
+].filter(Boolean);
+
+for (const p of candidates) {
+  if (p && fs.existsSync(p)) { 
+    dotenv.config({ path: p }); 
+    console.log(`✅ Loaded .env from: ${p}`);
+    break; 
+  }
+}
+
+// Check nhẹ (không lộ key)
+const mask = (s) => (s ? s.slice(0, 4) + "…" + s.slice(-2) : "MISSING");
+if (!process.env.RECALL_API_KEY) {
+  console.error("❌ RECALL_API_KEY is missing. Looked for:", candidates);
+  console.error("Please create a .env file in your project root with RECALL_API_KEY=your_key");
+  process.exit(1);
+} else {
+  console.log("🔑 RECALL_API_KEY =", mask(process.env.RECALL_API_KEY));
+}
+
 import dayjs from "dayjs";
 import { z } from "zod";
 import { recall, configureRecall } from "./lib/recall.js";
@@ -77,6 +111,7 @@ const CHAINS = ["eth", "base", "arbitrum", "optimism", "polygon", "solana"];
 const INSTRUMENTS = getInstruments({ CHAINS, TRADE_TOKENS });
 
 console.log("🚀 ADVANCED CRYPTO TRADING STRATEGY STARTING 🚀");
+console.log("🏆 COMPETITION MODE: READY FOR LIVE TRADING 🏆");
 console.log(`🚀 CONTEST MODE: ${AGGRESSIVE_MODE ? 'ENABLED' : 'DISABLED'}`);
 console.log(`🚀 VOLUME BOOST MODE: ${VOLUME_BOOST_MODE ? 'ENABLED' : 'DISABLED'}`);
 console.log(`🎯 TARGET DAILY VOLUME: $${TARGET_DAILY_VOLUME.toLocaleString()}`);
@@ -87,6 +122,9 @@ console.log(`🕐 Quota check: every ${QUOTA_CHECK_EVERY_MIN} min, safe window e
 console.log(`⚡ Contest settings: Min volume $${MIN_VOLUME_USD}, Max daily trades: ${NO_DAILY_CAP ? 'UNLIMITED' : MAX_DAILY_TRADES}`);
 console.log(`🎯 TP/SL Configuration: TP=${TP_BPS}bps, SL=${SL_BPS}bps, Trailing=${USE_TRAILING ? TRAIL_BPS + 'bps' : 'OFF'}`);
 console.log(`🚀 Startup Mode: ${ON_START_MODE.toUpperCase()}`);
+console.log(`🔑 Trading Mode: ${DRY_RUN ? 'DRY RUN (No real trades)' : 'LIVE TRADING (Real money at risk!)'}`);
+console.log(`⏰ Price Polling: Every ${POLL_SEC} seconds`);
+console.log("=".repeat(80));
 
 // Initialize the advanced strategy
 const strategy = new AdvancedCryptoStrategy({
@@ -107,7 +145,19 @@ let state = loadState();
 console.log(`📁 Loaded existing state: ${Object.keys(state.pos || {}).length} positions`);
 
 // Configure Recall API
-configureRecall(env.RECALL_API_KEY, env.RECALL_API_URL);
+if (!env.RECALL_API_KEY) {
+    console.error("❌ RECALL_API_KEY is required. Please set it in your .env file");
+    console.error("Get your API key from: https://recall.ai");
+    process.exit(1);
+}
+
+try {
+    configureRecall(env.RECALL_API_KEY, env.RECALL_API_URL);
+    console.log("✅ Recall API configured successfully");
+} catch (error) {
+    console.error("❌ Failed to configure Recall API:", error.message);
+    process.exit(1);
+}
 
 // Initialize quota system - simplified for now
 console.log(`[QUOTA] Quota system initialized: ${MIN_DAILY_TRADES} trades/day, $${QUOTA_TRADE_USD} per trade`);
@@ -136,6 +186,7 @@ async function main() {
         
         try {
             console.log(`\n🔄 Iteration ${iteration} - ${now.format('YYYY-MM-DD HH:mm:ss')}`);
+            console.log(`📊 Processing ${INSTRUMENTS.length} trading instruments...`);
             
             // Check quota status - simplified for now
             const quotaStatus = { canTrade: true, message: "Quota check passed" };
@@ -148,15 +199,25 @@ async function main() {
             // Process each trading token using normalized instruments
             for (const { chain, symbol, address } of INSTRUMENTS) {
                 try {
-                    // Get current price using address if available, otherwise use symbol
-                    const tokenToQuery = address || symbol;
-                    const price = await retryManager.retry(
-                        () => recall.price(tokenToQuery, chain, chain === "solana" ? "mainnet" : chain),
-                        `Getting price for ${symbol} on ${chain}`
-                    );
+                    let price;
                     
-                    if (!price) {
-                        console.log(`[${now.format('HH:mm:ss')}] Failed to get price for ${symbol} on ${chain}`);
+                    // Live mode: get real price from API
+                    const tokenToQuery = address || symbol;
+                    try {
+                        price = await retryManager.retry(
+                            () => recall.price(tokenToQuery, chain, chain === "solana" ? "mainnet" : chain),
+                            `Getting price for ${symbol} on ${chain}`
+                        );
+                        
+                        if (!price || price <= 0) {
+                            console.log(`[${now.format('HH:mm:ss')}] ⚠️ Invalid price for ${symbol} on ${chain}: ${price}`);
+                            continue;
+                        }
+                        
+                        console.log(`[${now.format('HH:mm:ss')}] 💰 ${symbol} on ${chain}: $${price.toFixed(4)}`);
+                        
+                    } catch (priceError) {
+                        console.error(`[${now.format('HH:mm:ss')}] ❌ Failed to get price for ${symbol} on ${chain}:`, priceError.message);
                         continue;
                     }
                     
@@ -165,16 +226,106 @@ async function main() {
                     // Update strategy with new price data
                     strategy.updatePrice(symbol, price, volume);
                     
-                    // Get trading decision from advanced strategy
+                    // Check if we should exit existing positions first
+                    const exitSignal = strategy.generateExitSignal(symbol, price);
+                    if (exitSignal) {
+                        console.log(`[${now.format('HH:mm:ss')}] ${symbol}: EXIT SIGNAL - ${exitSignal.reason}`);
+                        
+                        if (!DRY_RUN) {
+                            // Execute exit trade (LIVE TRADING)
+                            try {
+                                const exitQty = state.pos[symbol]?.qty || 0;
+                                console.log(`[${symbol}] 🚀 EXECUTING EXIT: ${exitQty} ${symbol} at $${price} ($${(exitQty * price).toFixed(2)}) - Reason: ${exitSignal.reason}`);
+                                
+                                await recall.tradeExecute({
+                                    fromToken: symbol,
+                                    toToken: BASE,
+                                    amount: String(exitQty),
+                                    reason: `exit-${exitSignal.reason.toLowerCase().replace(' ', '-')}`
+                                });
+                                
+                                // Update state after exit
+                                if (state.pos[symbol]) {
+                                    updatePositionState(state, {
+                                        token: symbol,
+                                        side: "SELL",
+                                        qty: exitQty,
+                                        priceUSD: price
+                                    });
+                                    saveState(state);
+                                    console.log(`[${symbol}] ✅ SUCCESS: Exited position of ${exitQty} at $${price}`);
+                                }
+                            } catch (tradeError) {
+                                console.error(`[${symbol}] ❌ EXIT TRADE FAILED:`, tradeError.message);
+                            }
+                        } else {
+                            console.log(`[${symbol}] 🔍 DRY_RUN: Would execute exit trade for ${exitSignal.reason}`);
+                        }
+                        continue; // Skip entry signals after exit
+                    }
+                    
+                    // Get trading decision from advanced strategy for new positions
                     const decision = strategy.targetPosition(symbol, 1000); // Assuming $1000 available capital
                     
                     if (decision.position !== 0) {
                         console.log(`[${now.format('HH:mm:ss')}] ${symbol}: ${decision.reason}`);
                         
                         if (!DRY_RUN) {
-                            // Execute trade logic here
-                            // This would integrate with your existing trade execution system
-                            console.log(`[${symbol}] Would execute ${decision.position > 0 ? 'BUY' : 'SELL'} of ${Math.abs(decision.position).toFixed(6)}`);
+                            // Execute trade logic here (LIVE TRADING)
+                            try {
+                                if (decision.position > 0) {
+                                    // BUY signal
+                                    const buyAmount = decision.position * price;
+                                    console.log(`[${symbol}] 🚀 EXECUTING BUY: ${decision.position.toFixed(6)} ${symbol} at $${price} ($${buyAmount.toFixed(2)})`);
+                                    
+                                    await recall.tradeExecute({
+                                        fromToken: BASE,
+                                        toToken: symbol,
+                                        amount: String(buyAmount),
+                                        reason: `buy-${decision.signal.strength.toFixed(2)}`
+                                    });
+                                    
+                                    // Update state after buy
+                                    updatePositionState(state, {
+                                        token: symbol,
+                                        side: "BUY",
+                                        qty: decision.position,
+                                        priceUSD: price
+                                    });
+                                    saveState(state);
+                                    console.log(`[${symbol}] ✅ SUCCESS: Bought ${decision.position.toFixed(6)} at $${price}`);
+                                } else {
+                                    // SELL signal (for new short positions - if supported)
+                                    const sellAmount = Math.abs(decision.position);
+                                    console.log(`[${symbol}] 🚀 EXECUTING SELL: ${sellAmount.toFixed(6)} ${symbol} at $${price} ($${(sellAmount * price).toFixed(2)})`);
+                                    
+                                    await recall.tradeExecute({
+                                        fromToken: symbol,
+                                        toToken: BASE,
+                                        amount: String(sellAmount),
+                                        reason: `sell-${decision.signal.strength.toFixed(2)}`
+                                    });
+                                    
+                                    // Update state after sell
+                                    updatePositionState(state, {
+                                        token: symbol,
+                                        side: "SELL",
+                                        qty: sellAmount,
+                                        priceUSD: price
+                                    });
+                                    saveState(state);
+                                    console.log(`[${symbol}] ✅ SUCCESS: Sold ${sellAmount.toFixed(6)} at $${price}`);
+                                }
+                                
+                                // Update last trade timestamp
+                                strategy.lastTradeAt.set(symbol, now.valueOf());
+                                
+                            } catch (tradeError) {
+                                console.error(`[${symbol}] ❌ TRADE FAILED:`, tradeError.message);
+                                // Continue with other tokens even if one trade fails
+                            }
+                        } else {
+                            console.log(`[${symbol}] 🔍 DRY_RUN: Would execute ${decision.position > 0 ? 'BUY' : 'SELL'} of ${Math.abs(decision.position).toFixed(6)} at $${price}`);
                         }
                     } else if (decision.reason && decision.reason !== 'Insufficient data') {
                         console.log(`[${now.format('HH:mm:ss')}] ${symbol}: ${decision.reason}`);
@@ -183,6 +334,29 @@ async function main() {
                 } catch (error) {
                     console.error(`[${now.format('HH:mm:ss')}] Error processing ${symbol} on ${chain}:`, error.message);
                 }
+            }
+            
+            // Check TP/SL conditions for existing positions
+            if (!DRY_RUN) {
+                try {
+                    await checkTpSlAndExitIfNeeded({
+                        recall,
+                        base: BASE,
+                        chain: "eth", // Default chain
+                        tradeCooldownSec: 1,
+                        tradingState: state,
+                        tpBps: TP_BPS,
+                        slBps: SL_BPS,
+                        useTrailing: USE_TRAILING,
+                        trailBps: TRAIL_BPS,
+                        updatePositionState,
+                        saveState
+                    });
+                } catch (tpSlError) {
+                    console.error(`[TP/SL] Error checking TP/SL conditions:`, tpSlError.message);
+                }
+            } else {
+                console.log(`[TP/SL] DRY_RUN: Would check TP/SL conditions for existing positions`);
             }
             
             // Display current portfolio heat

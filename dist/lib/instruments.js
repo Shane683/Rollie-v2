@@ -37,7 +37,13 @@ export function normalizeSymbol(symbol, chain) {
 export const TOKEN_ADDR = {
   eth: {
     WETH:  "0xC02aaa39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-    WBTC:  "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+    WBTC:  "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    USDC:  "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    UNI:   "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+    AAVE:  "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+    LINK:  "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+    DOT:   "0x9C2C5fd7b07E95EE044DDdba0c4Cfa3654cA4C5b", // Polkadot (Wrapped)
+    ATOM:  "0x8D983cb9388EaC77afFe4E8B695B5d6E0b3280d0"  // Cosmos (Wrapped)
   },
   base: {
     WETH:  "0x4200000000000000000000000000000000000006"
@@ -51,10 +57,15 @@ export const TOKEN_ADDR = {
     WETH:  "0x4200000000000000000000000000000000000006"
   },
   polygon: {
-    WMATIC:"0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"
+    WMATIC:"0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
+    MATIC: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"
+  },
+  avalanche: {
+    AVAX:  "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7"
   },
   solana: {
-    SOL:   "So11111111111111111111111111111111111111112" // WSOL if needed
+    SOL:   "So11111111111111111111111111111111111111112", // Native SOL
+    WSOL:  "So11111111111111111111111111111111111111112"  // Wrapped SOL (same as native on Solana)
   }
 };
 
@@ -76,7 +87,21 @@ export function getInstruments({ CHAINS = [], TRADE_TOKENS = [] } = {}) {
       const c = normalizeChain(rawC);
       const s = normalizeSymbol(rawS, c);
       const addr = TOKEN_ADDR[c]?.[s];
-      list.push({ chain: c, symbol: s, address: addr });
+      
+      // Special handling for SOL on Solana
+      if (c === "solana" && s === "SOL") {
+        list.push({ chain: c, symbol: s, address: addr });
+        console.log(`✅ Added SOL on Solana with address: ${addr}`);
+        continue;
+      }
+      
+      // Only add instruments that have valid addresses
+      if (addr) {
+        list.push({ chain: c, symbol: s, address: addr });
+        console.log(`✅ Added ${s} on ${c} with address: ${addr}`);
+      } else {
+        console.warn(`⚠️ Skipping ${s} on ${c} - no address configured`);
+      }
     }
   }
   return list;

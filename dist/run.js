@@ -74,23 +74,31 @@ const QUOTA_WINDOW_END = env.QUOTA_WINDOW_END ?? "23:30"; // Extended trading wi
 const QUOTA_BASE = getBaseTokenFromEnv(env.QUOTA_BASE ?? "USDC");
 const QUOTA_TOKENS = parseTokensFromEnv(env.QUOTA_TOKENS ?? "WETH,WBTC,SOL,MATIC,AVAX,UNI,AAVE,LINK");
 
-// Parse tokens from environment - Expanded for more trading opportunities
-const TRADE_TOKENS = parseTokensFromEnv(env.TRADE_TOKENS ?? "WETH,WBTC,SOL,MATIC,AVAX,UNI,AAVE,LINK,DOT,ATOM,NEAR,FTM");
+// Parse tokens from environment - Focus on EVM-compatible tokens to avoid API issues
+const TRADE_TOKENS = parseTokensFromEnv(env.TRADE_TOKENS ?? "WETH,WBTC,MATIC,AVAX,UNI,AAVE,LINK,DOT,ATOM");
 const BASE = getBaseTokenFromEnv(env.BASE ?? "USDC");
 
 // Get normalized instruments using the new module
 const CHAINS = ["eth", "base", "arbitrum", "optimism", "polygon", "solana"];
 const INSTRUMENTS = getInstruments({ CHAINS, TRADE_TOKENS });
 
+// Filter instruments to only include those with valid addresses
+const VALID_INSTRUMENTS = INSTRUMENTS.filter(i => i.address);
+const SKIPPED_TOKENS = TRADE_TOKENS.filter(token => !VALID_INSTRUMENTS.find(i => i.symbol === token));
+
 console.log(`🚀 CONTEST MODE: ${AGGRESSIVE_MODE ? 'ENABLED' : 'DISABLED'}`);
 console.log(`🚀 VOLUME BOOST MODE: ${VOLUME_BOOST_MODE ? 'ENABLED' : 'DISABLED'}`);
 console.log(`🎯 TARGET DAILY VOLUME: $${TARGET_DAILY_VOLUME.toLocaleString()}`);
 console.log(`🚀 Trading tokens: ${TRADE_TOKENS.join(', ')} with base: ${BASE}`);
-console.log(`🔧 Normalized instruments: ${INSTRUMENTS.map(i => `${i.chain}:${i.symbol}${i.address ? `(${i.address.substring(0, 8)}...)` : ''}`).join(', ')}`);
+console.log(`🔧 Available instruments: ${VALID_INSTRUMENTS.map(i => `${i.chain}:${i.symbol}(${i.address.substring(0, 8)}...)`).join(', ')}`);
+if (SKIPPED_TOKENS.length > 0) {
+    console.log(`⚠️ Skipped tokens (no address): ${SKIPPED_TOKENS.join(', ')}`);
+}
 console.log(`⚡ Contest settings: Min volume $${MIN_VOLUME_USD}, Max daily trades: ${NO_DAILY_CAP ? 'UNLIMITED' : MAX_DAILY_TRADES}`);
 console.log(`🎯 TP/SL Configuration: TP=${TP_BPS}bps, SL=${SL_BPS}bps, Trailing=${USE_TRAILING ? TRAIL_BPS + 'bps' : 'OFF'}`);
 console.log(`🚀 Startup Mode: ${ON_START_MODE.toUpperCase()}`);
 console.log(`🎯 Target: ${MIN_DAILY_TRADES}+ trades/day, $${TARGET_DAILY_VOLUME.toLocaleString()}+ volume, 60%+ win rate`);
+console.log(`⚠️ Note: Excluded SOL, NEAR, FTM due to cross-chain API compatibility issues`);
 
 const strat = new MultiTokenEMAScalper({
     emaFast: Number(env.EMA_FAST ?? "5"), // Faster EMA for more frequent signals
@@ -354,7 +362,7 @@ async function main() {
             const now = Date.now();
             // 1) Lấy giá cho tất cả tokens
             const tokenPrices = new Map();
-            for (const { chain, symbol, address } of INSTRUMENTS) {
+            for (const { chain, symbol, address } of VALID_INSTRUMENTS) {
                 try {
                     // Use address if available, otherwise use symbol
                     const tokenToQuery = address || symbol;
@@ -448,10 +456,33 @@ async function main() {
                     // D. Costs & spread guard - estimate costs before trading
                     const drift = Math.abs(posTgt - posNow);
                     const tradeValue = drift * navUsd;
-                    const estCost = await costEstimator.getTokenCosts(symbol, tradeValue);
-                    const expectedReturn = costEstimator.calculateExpectedReturn(drift, strat.getVolatility(symbol));
                     
-                    if (!costEstimator.hasSufficientEdge(expectedReturn, estCost)) {
+                    // Fix NaN edge calculation by ensuring valid values
+                    let estCost = { totalCostPct: 0.003 }; // Default 0.3% cost
+                    try {
+                        estCost = await costEstimator.getTokenCosts(symbol, tradeValue);
+                        // Validate cost values to prevent NaN
+                        if (isNaN(estCost.totalCostPct) || estCost.totalCostPct <= 0) {
+                            estCost = { totalCostPct: 0.003 }; // Use default if invalid
+                        }
+                    } catch (costError) {
+                        console.log(`[${ts()}] ${symbol}: Cost estimation failed, using default: ${costError?.message || costError}`);
+                        estCost = { totalCostPct: 0.003 }; // Use default on error
+                    }
+                    
+                    const volatility = strat.getVolatility(symbol) || 0.02; // Default 2% volatility
+                    const expectedReturn = costEstimator.calculateExpectedReturn ? 
+                        costEstimator.calculateExpectedReturn(drift, volatility) : 
+                        drift * 100; // Fallback calculation
+                    
+                    // Validate expected return to prevent NaN
+                    if (isNaN(expectedReturn) || expectedReturn <= 0) {
+                        console.log(`[${ts()}] ${symbol}: Invalid expected return (${expectedReturn}), skipping`);
+                        logger.logDecision(symbol, currentPrice, drift, posTgt, 0, estCost, 'invalid_expected_return', 'skipped');
+                        continue;
+                    }
+                    
+                    if (!costEstimator.hasSufficientEdge || !costEstimator.hasSufficientEdge(expectedReturn, estCost)) {
                         console.log(`[${ts()}] ${symbol}: Insufficient edge (${(expectedReturn * 100).toFixed(2)}% < ${(estCost.totalCostPct * 100).toFixed(2)}% + 0.5%), skipping`);
                         logger.logDecision(symbol, currentPrice, drift, posTgt, 0, estCost, 'insufficient_edge', 'skipped');
                         continue;
@@ -527,6 +558,23 @@ async function main() {
                                     continue;
                                 }
                                 
+                                // Validate token addresses and chain compatibility
+                                if (!fromTokenConfig.address || !toTokenConfig.address) {
+                                    console.error(`[${ts()}] ${symbol}: Missing token addresses for ${leg.from} (${fromTokenConfig.address}) or ${leg.to} (${toTokenConfig.address})`);
+                                    continue;
+                                }
+                                
+                                // Check if both tokens are on compatible chains for the API
+                                const fromChain = fromTokenConfig.chain;
+                                const toChain = toTokenConfig.chain;
+                                
+                                // For now, only allow EVM-to-EVM trades to avoid cross-chain API issues
+                                if (fromChain !== 'evm' || toChain !== 'evm') {
+                                    console.log(`[${ts()}] ${symbol}: Skipping cross-chain trade ${fromChain}→${toChain} (${leg.from}→${leg.to}) - API compatibility issue`);
+                                    logger.logDecision(symbol, currentPrice, drift, posTgt, 0, estCost, 'cross_chain_not_supported', 'skipped');
+                                    continue;
+                                }
+                                
                                 try {
                                     // G. Retry with exponential backoff for trade execution
                                     const res = await retryManager.retryTradeExecution(async () => {
@@ -591,6 +639,21 @@ async function main() {
                                 }
                                 catch (tradeError) {
                                     console.error(`[${ts()}] ❌ ${symbol}: Trade execution error:`, tradeError);
+                                    
+                                    // Enhanced error logging for debugging
+                                    if (tradeError?.response) {
+                                        console.error(`[${ts()}] ${symbol}: API Response Status: ${tradeError.response.status}`);
+                                        console.error(`[${ts()}] ${symbol}: API Response Data:`, tradeError.response.data);
+                                        console.error(`[${ts()}] ${symbol}: Request Config:`, {
+                                            fromToken: fromTokenConfig.address,
+                                            toToken: toTokenConfig.address,
+                                            amount: qty,
+                                            reason,
+                                            fromChain: fromTokenConfig.chain,
+                                            toChain: toTokenConfig.chain
+                                        });
+                                    }
+                                    
                                     logger.logTrade(symbol, leg.from, leg.to, qty, tradeValue, false, tradeError);
                                 }
                                 

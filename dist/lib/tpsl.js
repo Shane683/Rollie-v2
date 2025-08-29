@@ -24,8 +24,16 @@ export async function getEquityUSD({ recall, base, chain }) {
       try {
         // Use address if available, otherwise use symbol
         const tokenToQuery = address || symbol;
-        const px = await recall.price(tokenToQuery, tokenChain, tokenChain === "solana" ? "mainnet" : tokenChain);
-        equity += qty * Number(px);
+        
+        // Handle Solana chain properly
+        const chainName = tokenChain === "solana" ? "mainnet" : tokenChain;
+        const px = await recall.price(tokenToQuery, tokenChain, chainName);
+        
+        if (px) {
+          equity += qty * Number(px);
+        } else {
+          console.warn(`[TP/SL] Could not get price for ${symbol} on ${tokenChain}, skipping from equity calculation`);
+        }
       } catch (e) {
         console.warn(`Failed to get price for ${symbol} on ${tokenChain}:`, e.message);
       }
@@ -66,7 +74,16 @@ export async function sellInChunks({
     
     // Use address if available, otherwise use symbol
     const tokenToQuery = instrument.address || instrument.symbol;
-    const px = await recall.price(tokenToQuery, instrument.chain, instrument.chain === "solana" ? "mainnet" : instrument.chain);
+    
+    // Handle Solana chain properly
+    const chainName = instrument.chain === "solana" ? "mainnet" : instrument.chain;
+    const px = await recall.price(tokenToQuery, instrument.chain, chainName);
+    
+    if (!px) {
+      console.error(`[TP/SL] ${symbol}: Could not get price for chunked sell`);
+      return;
+    }
+    
     const usdTotal = qty * Number(px);
     const equity = await getEquityUSD({ recall, base, chain: instrument.chain });
     const cap = 0.25 * equity; // 25% per trade
@@ -150,7 +167,16 @@ export async function checkTpSlAndExitIfNeeded({
       try {
         // Use address if available, otherwise use symbol
         const tokenToQuery = address || symbol;
-        const px = await recall.price(tokenToQuery, tokenChain, tokenChain === "solana" ? "mainnet" : tokenChain);
+        
+        // Handle Solana chain properly
+        const chainName = tokenChain === "solana" ? "mainnet" : tokenChain;
+        const px = await recall.price(tokenToQuery, tokenChain, chainName);
+        
+        if (!px) {
+          console.warn(`[TP/SL] ${symbol}: Could not get price, skipping TP/SL check`);
+          continue;
+        }
+        
         const st = tradingState.pos[symbol];
 
         // If we don't have saved state (first run), skip TP/SL for this token

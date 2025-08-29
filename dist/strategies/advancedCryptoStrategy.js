@@ -419,6 +419,92 @@ export class AdvancedCryptoStrategy {
         };
     }
 
+    // Check if we should exit existing positions
+    shouldExitPosition(symbol, currentPrice) {
+        const state = this.tokenStates.get(symbol);
+        if (!state || !state.lastPrice) return null;
+        
+        const tokenConfig = this.getTokenConfig(symbol);
+        
+        // Check if we have enough data for ATR calculation
+        if (!state.atr) return null;
+        
+        // Calculate stop loss and take profit levels
+        const stopLossDistance = state.atr * tokenConfig.stopLossMultiplier;
+        const takeProfitDistance = state.atr * tokenConfig.takeProfitMultiplier;
+        
+        // For now, we'll use a simple approach - in a real implementation,
+        // you'd track entry prices and current positions
+        const stopLoss = state.lastPrice - stopLossDistance;
+        const takeProfit = state.lastPrice + takeProfitDistance;
+        
+        if (currentPrice <= stopLoss) {
+            return {
+                action: 'sell',
+                reason: 'Stop Loss triggered',
+                price: currentPrice,
+                stopLoss: stopLoss,
+                takeProfit: takeProfit
+            };
+        }
+        
+        if (currentPrice >= takeProfit) {
+            return {
+                action: 'sell',
+                reason: 'Take Profit triggered',
+                price: currentPrice,
+                stopLoss: stopLoss,
+                takeProfit: takeProfit
+            };
+        }
+        
+        return null;
+    }
+
+    // Generate exit signals for existing positions
+    generateExitSignal(symbol, currentPrice) {
+        const exitCheck = this.shouldExitPosition(symbol, currentPrice);
+        if (!exitCheck) return null;
+        
+        return {
+            signal: 'sell',
+            strength: 1.0,
+            reason: exitCheck.reason,
+            exitInfo: exitCheck
+        };
+    }
+
+    // Check if we have an existing position that should be managed
+    hasExistingPosition(symbol) {
+        // This would integrate with your position tracking system
+        // For now, we'll assume no existing positions to avoid conflicts
+        return false;
+    }
+
+    // Enhanced signal generation that considers existing positions
+    generateEnhancedSignal(symbol, currentPrice) {
+        // First check if we should exit an existing position
+        const exitSignal = this.generateExitSignal(symbol, currentPrice);
+        if (exitSignal) {
+            return exitSignal;
+        }
+        
+        // Then check if we should enter a new position
+        const entrySignal = this.generateSignal(symbol);
+        
+        // If we have an existing position, be more conservative with new entries
+        if (this.hasExistingPosition(symbol)) {
+            if (entrySignal.signal === 'buy') {
+                // Only buy more if signal is very strong
+                if (entrySignal.strength < 0.8) {
+                    return { signal: 'wait', strength: 0, reason: 'Existing position - waiting for stronger signal' };
+                }
+            }
+        }
+        
+        return entrySignal;
+    }
+
     // Update portfolio heat when positions are closed
     updatePortfolioHeat(symbol, closedRisk) {
         this.portfolioHeat = Math.max(0, this.portfolioHeat - closedRisk);
